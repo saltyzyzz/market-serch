@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.browser-data/
+.browser-data-*/
+.browser-data-carsales/
+*.csv
+!data/au_suburbs.csv
+best_deals.csv
+.streamlit/secrets.toml
+.DS_Store
+.pytest_cache/
+*.log
+_cs_probe_out/
+_*.html
+debug_*.html

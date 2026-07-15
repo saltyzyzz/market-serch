@@ -1,0 +1,14 @@
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+# Base theme; the in-app Dark/Light toggle overrides colors via CSS
+[theme]
+base = "dark"
+primaryColor = "#3dd68c"
+backgroundColor = "#0b0d12"
+secondaryBackgroundColor = "#141820"
+textColor = "#eef0f5"
+font = "sans serif"
