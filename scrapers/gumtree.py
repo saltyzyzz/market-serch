@@ -10,8 +10,12 @@ from .locations import resolve_location
 from .models import GUMTREE_LOCATIONS, Listing
 from .utils import parse_price, slugify_query
 
-# Safari TLS fingerprint bypasses Gumtree's bot wall (Chrome fingerprints get 403)
-_IMPERSONATE_ORDER = ("safari17_0", "safari15_5", "chrome110")
+# Prefer modern Safari / Chrome fingerprints (keep short — 403s are usually hard blocks)
+_IMPERSONATE_ORDER = (
+    "safari180",
+    "safari17_0",
+    "chrome131",
+)
 
 # Three complementary result sets (Gumtree page=N query often repeats page 1)
 _SWEEP_SPECS = (
@@ -59,29 +63,48 @@ def build_gumtree_url(
 
 
 def _fetch_html(url: str) -> str:
+    """
+    Fetch a Gumtree search page with a few TLS fingerprints.
+    Raises RuntimeError on hard 403 blocks (caller may fall back to SERP).
+    """
     last_err: Exception | None = None
     headers = {
         "Accept-Language": "en-AU,en;q=0.9",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Cache-Control": "no-cache",
         "Referer": "https://www.gumtree.com.au/",
+        "Upgrade-Insecure-Requests": "1",
     }
+    forbidden_hits = 0
+
     for imp in _IMPERSONATE_ORDER:
         try:
-            r = creq.get(url, impersonate=imp, timeout=40, headers=headers)
+            r = creq.get(url, impersonate=imp, timeout=12, headers=headers)
             if r.status_code == 403:
+                forbidden_hits += 1
                 last_err = RuntimeError(f"Gumtree 403 with {imp}")
+                # Two 403s in a row => hard network block; stop early for SERP fallback
+                if forbidden_hits >= 2:
+                    break
                 continue
             if r.status_code >= 400:
                 last_err = RuntimeError(f"Gumtree HTTP {r.status_code}")
                 continue
-            if "access denied" in r.text[:2000].lower():
-                last_err = RuntimeError("Gumtree access denied page")
+            low = r.text[:2500].lower()
+            if "access denied" in low or "just a moment" in low:
+                forbidden_hits += 1
+                last_err = RuntimeError("Gumtree access denied / challenge page")
+                if forbidden_hits >= 2:
+                    break
+                continue
+            if len(r.text) < 800:
+                last_err = RuntimeError("Gumtree empty response")
                 continue
             return r.text
         except Exception as e:
             last_err = e
             continue
+
     raise RuntimeError(
         f"Gumtree blocked or unreachable ({last_err}). "
         "Try again later or open the search URL in your browser."
@@ -112,7 +135,7 @@ async def scrape_gumtree(
       1) relevance/rank page 1
       2) rank page 2 (/page-2 path)
       3) newest first
-    Results are merged and de-duplicated by listing URL.
+    On 403 blocks (common), stop hammering and fall back to search-engine discovery.
     """
     sweeps = max(1, min(int(sweeps or 3), 3))
     fetch_cap = min(max(limit * 4, 40), 90)
@@ -122,8 +145,21 @@ async def scrape_gumtree(
     results: list[Listing] = []
     sweep_stats: list[dict] = []
     errors: list[str] = []
+    blocked = False
 
     for spec in _SWEEP_SPECS[:sweeps]:
+        if blocked:
+            sweep_stats.append(
+                {
+                    "sweep": spec["name"],
+                    "skipped": True,
+                    "reason": "blocked",
+                    "new_unique": 0,
+                    "total": len(results),
+                }
+            )
+            continue
+
         url = build_gumtree_url(
             query,
             location,
@@ -135,7 +171,6 @@ async def scrape_gumtree(
         try:
             html = _fetch_html(url)
             page_hits = _parse_gumtree_html(html, fallback_loc, fetch_cap)
-            # Also parse full ad objects from embedded JSON (more reliable locations)
             json_hits = _parse_gumtree_json_ads(html, fallback_loc, fetch_cap)
             before = len(results)
             results = _merge_listings(results, page_hits)
@@ -149,22 +184,64 @@ async def scrape_gumtree(
                     "json_rows": len(json_hits),
                     "new_unique": added,
                     "total": len(results),
+                    "mode": "direct",
                 }
             )
         except Exception as e:
-            errors.append(f"{spec['name']}: {e}")
+            err_s = str(e)
+            errors.append(f"{spec['name']}: {err_s}")
+            if any(x in err_s.lower() for x in ("403", "blocked", "access denied", "challenge")):
+                blocked = True
             sweep_stats.append(
                 {
                     "sweep": spec["name"],
                     "url": url,
-                    "error": str(e),
+                    "error": err_s,
                     "new_unique": 0,
                     "total": len(results),
+                    "mode": "direct",
                 }
             )
 
-    if not results and errors:
-        raise RuntimeError("; ".join(errors))
+    # Fallback when Gumtree WAF blocks this network
+    if not results:
+        try:
+            from .serp import serp_listings
+
+            serp_hits, serp_stats = serp_listings(
+                query,
+                site_label="Gumtree",
+                must_contain="gumtree.com.au",
+                site_query="site:gumtree.com.au/web/listing",
+                location=fallback_loc,
+                limit=fetch_cap,
+                sweeps=min(sweeps, 3),
+            )
+            listing_hits = [
+                h
+                for h in serp_hits
+                if "/web/listing/" in h.link
+                or "/s-ad/" in h.link
+                or re.search(r"gumtree\.com\.au/.+/\d{6,}", h.link)
+            ]
+            results = _merge_listings(results, listing_hits or serp_hits)
+            sweep_stats.extend(serp_stats)
+        except Exception as e:
+            errors.append(f"serp: {e}")
+            sweep_stats.append(
+                {"sweep": "serp", "error": str(e), "new_unique": 0, "total": 0, "mode": "serp"}
+            )
+
+    scrape_gumtree.last_sweep_stats = sweep_stats  # type: ignore[attr-defined]
+    scrape_gumtree.last_errors = errors  # type: ignore[attr-defined]
+
+    if not results:
+        # Single clear message — not three identical 403 lines
+        raise RuntimeError(
+            "Gumtree is blocking this network (HTTP 403). "
+            "Use the Open Gumtree link below, try again later, or run on a home/residential connection. "
+            + (f"({errors[0]})" if errors else "")
+        )
 
     if max_price is not None:
         results = [r for r in results if r.price is None or r.price <= max_price]
@@ -175,11 +252,6 @@ async def scrape_gumtree(
         relevant = [r for r in results if any(t in r.title.lower() for t in terms)]
         if relevant:
             results = relevant
-
-    # Attach sweep metadata on a dummy attr via first listing is messy; return list only.
-    # search_all can call get_last_sweep_stats if we store module-level — keep simple:
-    scrape_gumtree.last_sweep_stats = sweep_stats  # type: ignore[attr-defined]
-    scrape_gumtree.last_errors = errors  # type: ignore[attr-defined]
 
     return results[:fetch_cap]
 
