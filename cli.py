@@ -18,7 +18,7 @@ from scrapers.search import search_all
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Search Facebook Marketplace + Gumtree + Carsales + Locanto for deals"
+        description="Search Facebook Marketplace + Gumtree for deals"
     )
     parser.add_argument("query", help="Item to search for")
     parser.add_argument("--location", default="Brisbane", help="City (default: Brisbane)")
@@ -39,8 +39,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--sources",
-        default="facebook,gumtree,carsales",
-        help="Comma list: facebook,gumtree,carsales,locanto",
+        default="facebook,gumtree",
+        help="Comma list: facebook,gumtree",
     )
     parser.add_argument("--no-facebook", action="store_true")
     parser.add_argument("--no-gumtree", action="store_true")
@@ -54,8 +54,7 @@ def main() -> None:
     args = parser.parse_args()
 
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
-    # Strip legacy ebay if someone still passes it
-    sources = [s for s in sources if s != "ebay"]
+    sources = [s for s in sources if s in {"facebook", "gumtree"}]
     if args.no_facebook and "facebook" in sources:
         sources.remove("facebook")
     if args.no_gumtree and "gumtree" in sources:

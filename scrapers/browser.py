@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from playwright.async_api import BrowserContext, Playwright, async_playwright
+try:
+    from playwright.async_api import BrowserContext, Playwright, async_playwright
+
+    HAS_PLAYWRIGHT = True
+except Exception:  # pragma: no cover
+    BrowserContext = object  # type: ignore
+    Playwright = object  # type: ignore
+    async_playwright = None  # type: ignore
+    HAS_PLAYWRIGHT = False
 
 # Persist cookies so Facebook login can survive across runs
 BROWSER_DATA = Path(__file__).resolve().parent.parent / ".browser-data"
@@ -21,6 +29,9 @@ async def open_context(
     channel: str | None = None,
 ) -> BrowserContext:
     """Launch a Chromium context, optionally with saved session data."""
+    if not HAS_PLAYWRIGHT:
+        raise RuntimeError("Playwright is not installed")
+
     BROWSER_DATA.mkdir(parents=True, exist_ok=True)
     extra = {"channel": channel} if channel else {}
 
@@ -71,7 +82,3 @@ async def new_page(context: BrowserContext):
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
     )
     return page
-
-
-# Re-export for convenience
-async_playwright = async_playwright

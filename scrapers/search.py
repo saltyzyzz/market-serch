@@ -4,10 +4,8 @@ import asyncio
 import time
 from typing import Awaitable, Callable
 
-from .carsales import scrape_carsales
 from .facebook import scrape_facebook
 from .gumtree import scrape_gumtree
-from .locanto import scrape_locanto
 from .locations import annotate_and_filter_radius, resolve_location
 from .models import Listing
 from .rank import rank_deals
@@ -15,15 +13,11 @@ from .rank import rank_deals
 SCRAPERS: dict[str, Callable[..., Awaitable[list[Listing]]]] = {
     "facebook": scrape_facebook,
     "gumtree": scrape_gumtree,
-    "locanto": scrape_locanto,
-    "carsales": scrape_carsales,
 }
 
 SOURCE_LABELS = {
     "facebook": "Facebook Marketplace",
     "gumtree": "Gumtree",
-    "locanto": "Locanto",
-    "carsales": "Carsales",
 }
 
 
@@ -43,10 +37,10 @@ async def search_all(
     sweeps: int = 3,
 ) -> tuple[list[Listing], "object"]:
     """
-    Run marketplace searches (each source does up to `sweeps` internal passes),
+    Run Facebook + Gumtree searches (each source does up to `sweeps` passes),
     enforce radius, and rank results.
     """
-    sources = sources or ["facebook", "gumtree", "carsales"]
+    sources = sources or ["facebook", "gumtree"]
     sources = [s for s in sources if s in SCRAPERS]
     radius_km = max(1, min(int(radius_km or 50), 500))
     sweeps = max(1, min(int(sweeps or 3), 3))
@@ -61,19 +55,9 @@ async def search_all(
             max_price=max_price,
             limit=limit,
             radius_km=radius_km,
+            sweeps=sweeps,
+            headless=headless_fb if name == "facebook" else headless_gt,
         )
-        if name == "facebook":
-            kwargs["headless"] = headless_fb
-            kwargs["sweeps"] = sweeps
-        elif name == "gumtree":
-            kwargs["headless"] = headless_gt
-            kwargs["sweeps"] = sweeps
-        elif name == "carsales":
-            kwargs["headless"] = True
-            kwargs["sweeps"] = sweeps
-        else:
-            kwargs["headless"] = True
-            # Locanto — single pass
         start = time.perf_counter()
         try:
             result: list[Listing] | Exception = await fn(**kwargs)
@@ -107,7 +91,6 @@ async def search_all(
             listings.extend(item)
             source_counts[label] = len(item)
 
-    # Hard radius filter using suburb geocoding of listing locations
     filtered, radius_stats = annotate_and_filter_radius(
         listings,
         center_lat=resolved.lat,
@@ -117,7 +100,6 @@ async def search_all(
         keep_unknown=(radius_km >= 40),
     )
 
-    # If strict filter wiped almost everything, soften once (keep unknowns)
     if len(filtered) < 3 and radius_stats.get("outside", 0) > 0 and radius_km < 40:
         filtered, radius_stats = annotate_and_filter_radius(
             listings,

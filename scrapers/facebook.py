@@ -77,7 +77,10 @@ def _fetch_html(url: str) -> str:
 
 
 async def _fetch_with_playwright(url: str, headless: bool) -> str:
-    from .browser import async_playwright, new_page, open_context
+    from .browser import HAS_PLAYWRIGHT, async_playwright, new_page, open_context
+
+    if not HAS_PLAYWRIGHT or async_playwright is None:
+        raise RuntimeError("Playwright not installed")
 
     async with async_playwright() as p:
         context = await open_context(p, headless=headless, persistent=True)
@@ -174,9 +177,13 @@ async def scrape_facebook(
                 }
             )
         except Exception as e:
-            sweep_stats.append({"sweep": "playwright", "error": str(e), "count": len(results)})
-            if not results:
-                raise RuntimeError(f"Facebook scrape failed: {e}") from e
+            msg = str(e)
+            if "NoneType" in msg and "callable" in msg:
+                msg = "Playwright not available"
+            sweep_stats.append(
+                {"sweep": "playwright", "error": msg, "count": len(results), "skipped": True}
+            )
+            # Do not hard-fail the whole Facebook scrape when browser is missing
     else:
         sweep_stats.append(
             {

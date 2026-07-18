@@ -1,5 +1,5 @@
 """
-Marketplace Deals Finder — Facebook + Gumtree + Locanto + Carsales
+Marketplace Deals Finder — Facebook Marketplace + Gumtree
 Run:  streamlit run app.py
 """
 
@@ -16,10 +16,8 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scrapers.carsales import build_carsales_url
 from scrapers.facebook import build_facebook_url
 from scrapers.gumtree import build_gumtree_url
-from scrapers.locanto import build_locanto_url
 from scrapers.locations import (
     STATES,
     default_suburb_label,
@@ -40,10 +38,8 @@ st.set_page_config(
 SOURCE_OPTIONS = {
     "Facebook Marketplace": "facebook",
     "Gumtree": "gumtree",
-    "Carsales": "carsales",
-    "Locanto": "locanto",
 }
-DEFAULT_SOURCES = ["Facebook Marketplace", "Gumtree", "Carsales"]
+DEFAULT_SOURCES = ["Facebook Marketplace", "Gumtree"]
 MAX_RECENT = 8
 
 
@@ -228,11 +224,6 @@ with st.sidebar:
             st.caption(
                 "Personal research only. Be gentle with search volume and respect each site's terms."
             )
-            st.caption(
-                "**Carsales tip:** often bot-blocked. Fix with a residential proxy "
-                "(`CARSALES_PROXY`) or run `python warm_carsales_session.py` once, "
-                "or use **Open Carsales** below results."
-            )
 
         search_btn = st.form_submit_button(
             "Search deals",
@@ -281,12 +272,10 @@ st.markdown(
       <div>
         <div class="mdf-hero-kicker">🇦🇺 Australia · local deals</div>
         <h1>Marketplace Deals Finder</h1>
-        <p>Search Facebook Marketplace, Gumtree, Carsales and Locanto together — then rank the best prices near you.</p>
+        <p>Search Facebook Marketplace and Gumtree together — then rank the best prices near you.</p>
         <div class="mdf-hero-pills">
           <span class="mdf-pill fb">Facebook Marketplace</span>
           <span class="mdf-pill gt">Gumtree</span>
-          <span class="mdf-pill cs">Carsales</span>
-          <span class="mdf-pill lc">Locanto</span>
         </div>
       </div>
     </div>
@@ -410,7 +399,7 @@ if df is not None:
         "Open the same search in your browser",
         expanded=bool(errors) and df.empty,
     ):
-        cols = st.columns(4)
+        cols = st.columns(2)
         if "facebook" in active_sources and q_display:
             cols[0].link_button(
                 "Facebook Marketplace",
@@ -421,18 +410,6 @@ if df is not None:
             cols[1].link_button(
                 "Gumtree",
                 build_gumtree_url(q_display, loc_display, mp, radius_km=rk),
-                use_container_width=True,
-            )
-        if "carsales" in active_sources and q_display:
-            cols[2].link_button(
-                "Carsales",
-                build_carsales_url(q_display, loc_display, mp, radius_km=rk),
-                use_container_width=True,
-            )
-        if "locanto" in active_sources and q_display:
-            cols[3].link_button(
-                "Locanto",
-                build_locanto_url(q_display, loc_display, mp, radius_km=rk),
                 use_container_width=True,
             )
 
@@ -610,7 +587,7 @@ else:
     )
 
 st.markdown(
-    '<div class="mdf-footer">Personal deal-hunting tool · not affiliated with Facebook, Gumtree, Carsales or Locanto</div>',
+    '<div class="mdf-footer">Personal deal-hunting tool · not affiliated with Facebook or Gumtree</div>',
     unsafe_allow_html=True,
 )
 st.markdown(
